@@ -80,8 +80,6 @@ async def security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    # Ẩn server info
-    response.headers.pop("server", None)
     return response
 
 
@@ -156,7 +154,10 @@ async def ask_agent(
         "answer": response_text,
         "usage": {
             "requests_remaining": rate_info["remaining"],
-            "budget_remaining_usd": usage.total_cost_usd,
+            "budget_remaining_usd": max(
+                0.0,
+                cost_guard.daily_budget_usd - usage.total_cost_usd,
+            ),
         },
     }
 
@@ -195,8 +196,15 @@ def health():
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
+    debug = os.getenv("DEBUG", "false").lower() == "true"
     print("\n=== Demo credentials ===")
     print("  student / demo123  (10 req/min, $1/day budget)")
     print("  teacher / teach456 (100 req/min, $1/day budget)")
     print(f"\nDocs: http://localhost:{port}/docs\n")
-    uvicorn.run("app:app", host="0.0.0.0", port=port, reload=True)
+    uvicorn.run(
+        "app:app" if debug else app,
+        host="0.0.0.0",
+        port=port,
+        reload=debug,
+        timeout_graceful_shutdown=30,
+    )

@@ -19,7 +19,7 @@ develop/
 
 ### Chạy thử
 ```bash
-cd basic
+cd develop
 pip install -r requirements.txt
 AGENT_API_KEY=my-secret-key python app.py
 
@@ -50,7 +50,7 @@ production/
 
 ### Chạy thử
 ```bash
-cd advanced
+cd production
 pip install -r requirements.txt
 python app.py
 

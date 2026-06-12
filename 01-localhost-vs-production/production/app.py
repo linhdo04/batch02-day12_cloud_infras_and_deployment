@@ -10,7 +10,6 @@ So sánh với basic/app.py để thấy sự khác biệt:
   ✅ Port từ PORT env var (Railway/Render inject tự động)
 """
 import os
-import signal
 import logging
 import json
 import time
@@ -27,7 +26,7 @@ from utils.mock_llm import ask
 # ✅ Structured JSON logging — dễ parse trong log aggregator (Datadog, Loki...)
 logging.basicConfig(
     level=logging.DEBUG if settings.debug else logging.INFO,
-    format='{"time":"%(asctime)s","level":"%(levelname)s","msg":"%(message)s"}',
+    format="%(message)s",
 )
 logger = logging.getLogger(__name__)
 
@@ -170,22 +169,6 @@ def metrics():
     }
 
 
-# ============================================================
-# GRACEFUL SHUTDOWN
-# ============================================================
-
-def handle_sigterm(*args):
-    """
-    ✅ Xử lý SIGTERM — signal mà platform gửi khi muốn tắt container.
-    Cho phép request hiện tại hoàn thành trước khi tắt.
-    """
-    logger.info("Received SIGTERM — initiating graceful shutdown")
-    # uvicorn sẽ tự handle, nhưng bạn có thể thêm cleanup logic ở đây
-
-
-signal.signal(signal.SIGTERM, handle_sigterm)
-
-
 if __name__ == "__main__":
     logger.info(f"Starting {settings.app_name} on {settings.host}:{settings.port}")
     uvicorn.run(
@@ -193,4 +176,5 @@ if __name__ == "__main__":
         host=settings.host,   # ✅ 0.0.0.0 — nhận kết nối từ bên ngoài container
         port=settings.port,    # ✅ từ PORT env var
         reload=settings.debug, # ✅ reload chỉ khi DEBUG=true
+        timeout_graceful_shutdown=30,
     )

@@ -14,13 +14,14 @@ services:
     runtime: python
     region: singapore         # Chọn region gần user nhất
     plan: free                # free | starter | standard | pro
+    rootDir: 03-cloud-deployment/railway
 
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
 
     healthCheckPath: /health   # Render check path này
 
-    autoDeploy: true           # Auto deploy khi push to GitHub
+    autoDeployTrigger: commit  # Auto deploy khi push to GitHub
 
     envVars:
       - key: ENVIRONMENT
@@ -40,12 +41,15 @@ services:
     #   sizeGB: 1
 
   # ──────────────────────────────────────
-  # Redis (dùng Render Redis add-on)
+  # Key Value (Redis-compatible)
   # ──────────────────────────────────────
-  - type: redis
+  - type: keyvalue
     name: agent-cache
+    region: singapore
     plan: free
+    ipAllowList: []
     maxmemoryPolicy: allkeys-lru
+    persistenceMode: "off"
 
 # ============================================================
 # Cách deploy:

@@ -1,142 +1,241 @@
-"""
-Production Readiness Checker
+"""Validate the Day 12 final project.
 
-Tự động kiểm tra project có đủ điều kiện deploy chưa.
-Chạy: python check_production_ready.py
+Run static and Docker checks:
+    python check_production_ready.py
 
-Output: checklist với ✅ / ❌ cho từng item.
+Also test a running stack at http://localhost:8000:
+    python check_production_ready.py --runtime
 """
-import os
-import sys
+from __future__ import annotations
+
+import argparse
 import json
+import os
+import re
 import subprocess
+import sys
+import urllib.error
+import urllib.request
+import uuid
+from pathlib import Path
 
 
-def check(name: str, passed: bool, detail: str = "") -> dict:
-    icon = "✅" if passed else "❌"
-    print(f"  {icon} {name}" + (f" — {detail}" if detail else ""))
-    return {"name": name, "passed": passed}
+BASE = Path(__file__).resolve().parent
+MAX_IMAGE_BYTES = 500 * 1024 * 1024
 
 
-def run_checks():
-    results = []
-    base = os.path.dirname(__file__)
+class Report:
+    def __init__(self) -> None:
+        self.results: list[tuple[str, bool, str]] = []
 
-    print("\n" + "=" * 55)
-    print("  Production Readiness Check — Day 12 Lab")
-    print("=" * 55)
+    def check(self, name: str, passed: bool, detail: str = "") -> None:
+        self.results.append((name, passed, detail))
+        icon = "PASS" if passed else "FAIL"
+        suffix = f" - {detail}" if detail else ""
+        print(f"  [{icon}] {name}{suffix}")
 
-    # ── Files ──────────────────���───────────────────
-    print("\n📁 Required Files")
-    results.append(check("Dockerfile exists",
-                         os.path.exists(os.path.join(base, "Dockerfile"))))
-    results.append(check("docker-compose.yml exists",
-                         os.path.exists(os.path.join(base, "docker-compose.yml"))))
-    results.append(check(".dockerignore exists",
-                         os.path.exists(os.path.join(base, ".dockerignore"))))
-    results.append(check(".env.example exists",
-                         os.path.exists(os.path.join(base, ".env.example"))))
-    results.append(check("requirements.txt exists",
-                         os.path.exists(os.path.join(base, "requirements.txt"))))
-    results.append(check("railway.toml or render.yaml exists",
-                         os.path.exists(os.path.join(base, "railway.toml")) or
-                         os.path.exists(os.path.join(base, "render.yaml"))))
+    def finish(self) -> bool:
+        passed = sum(result[1] for result in self.results)
+        total = len(self.results)
+        print(f"\nResult: {passed}/{total} checks passed")
+        return passed == total
 
-    # ── Security ──────────────────────────────────���
-    print("\n🔒 Security")
 
-    # Check .env not tracked
-    env_file = os.path.join(base, ".env")
-    gitignore = os.path.join(base, ".gitignore")
-    root_gitignore = os.path.join(base, "..", ".gitignore")
+def read(relative_path: str) -> str:
+    return (BASE / relative_path).read_text(encoding="utf-8")
 
-    env_ignored = False
-    for gi in [gitignore, root_gitignore]:
-        if os.path.exists(gi):
-            content = open(gi).read()
-            if ".env" in content:
-                env_ignored = True
-                break
-    results.append(check(".env in .gitignore",
-                         env_ignored,
-                         "Add .env to .gitignore!" if not env_ignored else ""))
 
-    # Check no hardcoded secrets in code
-    secrets_found = []
-    for f in ["app/main.py", "app/config.py"]:
-        fpath = os.path.join(base, f)
-        if os.path.exists(fpath):
-            content = open(fpath).read()
-            for bad in ["sk-", "password123", "hardcoded"]:
-                if bad in content:
-                    secrets_found.append(f"{f}:{bad}")
-    results.append(check("No hardcoded secrets in code",
-                         len(secrets_found) == 0,
-                         str(secrets_found) if secrets_found else ""))
+def run(command: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        command,
+        cwd=BASE,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
-    # ── API Endpoints ────────────────────────────��─
-    print("\n🌐 API Endpoints (code check)")
-    main_py = os.path.join(base, "app", "main.py")
-    if os.path.exists(main_py):
-        content = open(main_py).read()
-        results.append(check("/health endpoint defined",
-                             '"/health"' in content or "'/health'" in content))
-        results.append(check("/ready endpoint defined",
-                             '"/ready"' in content or "'/ready'" in content))
-        results.append(check("Authentication implemented",
-                             "api_key" in content.lower() or "verify_token" in content))
-        results.append(check("Rate limiting implemented",
-                             "rate_limit" in content.lower() or "429" in content))
-        results.append(check("Graceful shutdown (SIGTERM)",
-                             "SIGTERM" in content))
-        results.append(check("Structured logging (JSON)",
-                             "json.dumps" in content or '"event"' in content))
+
+def static_checks(report: Report) -> None:
+    print("\nRequired files")
+    required = [
+        "app/main.py",
+        "app/config.py",
+        "app/auth.py",
+        "app/rate_limiter.py",
+        "app/cost_guard.py",
+        "app/storage.py",
+        "utils/mock_llm.py",
+        "Dockerfile",
+        "docker-compose.yml",
+        "nginx/nginx.conf",
+        "requirements.txt",
+        ".env.example",
+        ".dockerignore",
+        "railway.toml",
+        "render.yaml",
+        "README.md",
+    ]
+    for path in required:
+        report.check(path, (BASE / path).is_file())
+
+    print("\nApplication")
+    main = read("app/main.py")
+    config = read("app/config.py")
+    storage = read("app/storage.py")
+    limiter = read("app/rate_limiter.py")
+    guard = read("app/cost_guard.py")
+    auth = read("app/auth.py")
+    report.check("GET /health", '@app.get("/health")' in main)
+    report.check("GET /ready", '@app.get("/ready")' in main)
+    report.check("POST /ask", '@app.post("/ask"' in main)
+    report.check("API-key authentication", "compare_digest" in auth and "401" in auth)
+    report.check(
+        "Redis sliding-window rate limit",
+        "ZREMRANGEBYSCORE" in limiter and "ZCARD" in limiter and "429" in limiter,
+    )
+    report.check(
+        "Monthly Redis cost guard",
+        "INCRBYFLOAT" in guard and "Monthly budget exceeded" in guard and "402" in guard,
+    )
+    report.check(
+        "Conversation history in Redis",
+        "lrange" in storage and "rpush" in storage and "conversation:" in storage,
+    )
+    report.check("Structured JSON events", "json.dumps" in main and "log_event" in main)
+    report.check(
+        "Graceful SIGTERM lifecycle",
+        "SIGTERM" in main and "graceful_shutdown_complete" in main,
+    )
+    report.check(
+        "Environment configuration",
+        'os.getenv("AGENT_API_KEY", "")' in config
+        and 'os.getenv("REDIS_URL"' in config,
+    )
+
+    secret_pattern = re.compile(r"(sk-[A-Za-z0-9_-]{8,}|password\\s*=\\s*['\"][^'\"]+)")
+    source = "\n".join(path.read_text(encoding="utf-8") for path in (BASE / "app").glob("*.py"))
+    report.check("No hardcoded production secrets", secret_pattern.search(source) is None)
+
+    root_gitignore = BASE.parent / ".gitignore"
+    ignored = root_gitignore.is_file() and ".env" in root_gitignore.read_text(encoding="utf-8")
+    report.check(".env ignored by Git", ignored)
+
+    print("\nContainers")
+    dockerfile = read("Dockerfile")
+    compose = read("docker-compose.yml")
+    report.check(
+        "Multi-stage Dockerfile",
+        len(re.findall(r"^FROM ", dockerfile, flags=re.MULTILINE | re.IGNORECASE)) >= 2,
+    )
+    report.check("Slim runtime image", "python:3.11-slim" in dockerfile)
+    report.check("Non-root runtime user", "USER agent" in dockerfile)
+    report.check("Docker HEALTHCHECK", "HEALTHCHECK" in dockerfile)
+    report.check("Compose includes agent", re.search(r"^  agent:", compose, re.MULTILINE) is not None)
+    report.check("Compose includes Redis", re.search(r"^  redis:", compose, re.MULTILINE) is not None)
+    report.check("Compose includes Nginx", re.search(r"^  nginx:", compose, re.MULTILINE) is not None)
+
+    compose_result = run(["docker", "compose", "config"])
+    report.check(
+        "docker compose config",
+        compose_result.returncode == 0,
+        compose_result.stderr.strip() if compose_result.returncode else "",
+    )
+
+    image_result = run(
+        ["docker", "image", "inspect", "06-lab-complete-agent", "--format={{.Size}}"]
+    )
+    if image_result.returncode == 0:
+        size = int(image_result.stdout.strip())
+        report.check("Docker image under 500 MB", size < MAX_IMAGE_BYTES, f"{size / 1024 / 1024:.1f} MB")
     else:
-        results.append(check("app/main.py exists", False, "Create app/main.py!"))
+        report.check("Docker image under 500 MB", False, "build image first")
 
-    # ── Docker ─────────────────────────────────────
-    print("\n🐳 Docker")
-    dockerfile = os.path.join(base, "Dockerfile")
-    if os.path.exists(dockerfile):
-        content = open(dockerfile).read()
-        results.append(check("Multi-stage build",
-                             "AS builder" in content or "AS runtime" in content))
-        results.append(check("Non-root user",
-                             "useradd" in content or "USER " in content))
-        results.append(check("HEALTHCHECK instruction",
-                             "HEALTHCHECK" in content))
-        results.append(check("Slim base image",
-                             "slim" in content or "alpine" in content))
 
-    dockerignore = os.path.join(base, ".dockerignore")
-    if os.path.exists(dockerignore):
-        content = open(dockerignore).read()
-        results.append(check(".dockerignore covers .env",
-                             ".env" in content))
-        results.append(check(".dockerignore covers __pycache__",
-                             "__pycache__" in content))
+def http_request(
+    path: str,
+    method: str = "GET",
+    payload: dict[str, str] | None = None,
+    authenticated: bool = False,
+) -> tuple[int, dict]:
+    headers: dict[str, str] = {}
+    if authenticated:
+        headers["X-API-Key"] = os.getenv("AGENT_API_KEY", "local-development-key")
+    data = None
+    if payload is not None:
+        headers["Content-Type"] = "application/json"
+        data = json.dumps(payload).encode()
+    request = urllib.request.Request(
+        os.getenv("BASE_URL", "http://localhost:8000") + path,
+        data=data,
+        headers=headers,
+        method=method,
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return response.status, json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read())
 
-    # ── Summary ───────────────────────────────────���
-    passed = sum(1 for r in results if r["passed"])
-    total = len(results)
-    pct = round(passed / total * 100)
 
-    print("\n" + "=" * 55)
-    print(f"  Result: {passed}/{total} checks passed ({pct}%)")
+def runtime_checks(report: Report) -> None:
+    print("\nRuntime")
+    health_status, _ = http_request("/health")
+    ready_status, ready = http_request("/ready")
+    report.check("Health returns 200", health_status == 200)
+    report.check("Readiness returns 200 with Redis", ready_status == 200 and ready.get("storage") == "redis")
 
-    if pct == 100:
-        print("  🎉 PRODUCTION READY! Deploy nào!")
-    elif pct >= 80:
-        print("  ✅ Almost there! Fix the ❌ items above.")
-    elif pct >= 60:
-        print("  ⚠️  Good progress. Several items need attention.")
-    else:
-        print("  ❌ Not ready. Review the checklist carefully.")
+    user = f"verify-{uuid.uuid4().hex[:8]}"
+    no_auth, _ = http_request(
+        "/ask", "POST", {"user_id": user, "question": "hello"}, authenticated=False
+    )
+    invalid, _ = http_request("/ask", "POST", {"invalid": "data"}, authenticated=True)
+    report.check("Missing API key returns 401", no_auth == 401)
+    report.check("Invalid payload returns 422", invalid == 422)
 
-    print("=" * 55 + "\n")
-    return pct == 100
+    first_status, _ = http_request(
+        "/ask",
+        "POST",
+        {"user_id": user, "question": "My first message"},
+        authenticated=True,
+    )
+    second_status, second = http_request(
+        "/ask",
+        "POST",
+        {"user_id": user, "question": "What did I just say?"},
+        authenticated=True,
+    )
+    report.check(
+        "Conversation context survives requests",
+        first_status == 200
+        and second_status == 200
+        and "My first message" in second.get("answer", ""),
+    )
+
+    rate_user = f"rate-{uuid.uuid4().hex[:8]}"
+    statuses = [
+        http_request(
+            "/ask",
+            "POST",
+            {"user_id": rate_user, "question": f"request {index}"},
+            authenticated=True,
+        )[0]
+        for index in range(1, 12)
+    ]
+    report.check("Rate limit returns 429", statuses[:10] == [200] * 10 and statuses[10] == 429)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--runtime", action="store_true", help="also test a running local stack")
+    args = parser.parse_args()
+
+    print("Day 12 Production Readiness Check")
+    report = Report()
+    static_checks(report)
+    if args.runtime:
+        runtime_checks(report)
+    return 0 if report.finish() else 1
 
 
 if __name__ == "__main__":
-    ready = run_checks()
-    sys.exit(0 if ready else 1)
+    sys.exit(main())

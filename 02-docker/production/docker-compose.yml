@@ -2,17 +2,14 @@
 # Docker Compose — Full Agent Stack
 #
 # Services:
-#   1. agent    — FastAPI AI agent (2 replicas)
+#   1. agent    — FastAPI AI agent
 #   2. redis    — Cache cho session và rate limiting
-#   3. qdrant   — Vector database cho RAG
-#   4. nginx    — Reverse proxy, load balancer
+#   3. nginx    — Reverse proxy, load balancer
 #
 # Chạy: docker compose up
 # Test:  curl http://localhost/health
 # Stop:  docker compose down
 # ============================================================
-
-version: "3.9"
 
 services:
 
@@ -28,15 +25,10 @@ services:
       - ENVIRONMENT=staging
       - PORT=8000
       - REDIS_URL=redis://redis:6379/0
-      - QDRANT_URL=http://qdrant:6333
       # ❌ KHÔNG đặt secrets trực tiếp ở đây trong production
       # ✅ Dùng: docker secret hoặc env file ngoài git
-    env_file:
-      - .env.local              # secrets riêng, trong .gitignore
     depends_on:
       redis:
-        condition: service_healthy
-      qdrant:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c",
@@ -67,28 +59,12 @@ services:
       - internal
 
   # ──────────────────────────────────────
-  # Qdrant — Vector database
-  # ──────────────────────────────────────
-  qdrant:
-    image: qdrant/qdrant:v1.9.0
-    volumes:
-      - qdrant_data:/qdrant/storage
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-    networks:
-      - internal
-
-  # ──────────────────────────────────────
   # Nginx — Reverse proxy & Load balancer
   # ──────────────────────────────────────
   nginx:
     image: nginx:alpine
     ports:
       - "80:80"      # HTTP
-      - "443:443"    # HTTPS (cần cert)
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
@@ -102,7 +78,6 @@ services:
 # ──────────────────────────────────────
 volumes:
   redis_data:
-  qdrant_data:
 
 # ──────────────────────────────────────
 # Network — isolate internal traffic

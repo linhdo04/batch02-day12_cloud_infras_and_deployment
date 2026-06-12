@@ -45,6 +45,14 @@ day12_ha-tang-cloud_va_deployment/
 
 **Muốn học kỹ?** → [CODE_LAB.md](CODE_LAB.md) (3-4 giờ)
 
+## Bài Nộp
+
+- [Mission answers](MISSION_ANSWERS.md)
+- [Deployment record](DEPLOYMENT.md)
+- [Submission checklist](SUBMISSION_CHECKLIST.md)
+- [Final production agent](06-lab-complete/README.md)
+- Public service: https://agent-api-production-065b.up.railway.app
+
 ## Cách Học
 
 | Bước | Làm gì |

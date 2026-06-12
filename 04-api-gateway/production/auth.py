@@ -11,7 +11,6 @@ Flow:
 """
 import os
 import jwt
-import time
 from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -19,7 +18,13 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 # ─────────────────────────────────────────────
 # Config
 # ─────────────────────────────────────────────
-SECRET_KEY = os.getenv("JWT_SECRET", "super-secret-change-in-production-please")
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+SECRET_KEY = os.getenv(
+    "JWT_SECRET",
+    "local-jwt-demo-secret-change-before-production",
+)
+if ENVIRONMENT == "production" and "JWT_SECRET" not in os.environ:
+    raise RuntimeError("JWT_SECRET must be set in production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 

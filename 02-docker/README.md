@@ -12,7 +12,7 @@
 
 ```
 develop/
-├── app.py
+├── main.py
 ├── Dockerfile          # Single-stage, dễ hiểu
 ├── .dockerignore
 └── requirements.txt
@@ -44,10 +44,11 @@ curl http://localhost:8000/health
 production/
 ├── app.py
 ├── Dockerfile              # Multi-stage build → image nhỏ hơn nhiều
-├── docker-compose.yml      # Full stack: agent + vector store + redis
+├── docker-compose.yml      # Full stack: agent + redis + nginx
 ├── nginx/
 │   └── nginx.conf          # Reverse proxy
 ├── .dockerignore
+├── utils/
 └── requirements.txt
 ```
 
@@ -57,7 +58,7 @@ production/
 cd ../..  # if not already there
 
 # Khởi động toàn bộ stack (1 lệnh!)
-docker compose -f 02-docker/production/docker-compose.yml up
+docker compose -f 02-docker/production/docker-compose.yml up --build
 
 # Xem các service đang chạy
 docker compose -f 02-docker/production/docker-compose.yml ps
